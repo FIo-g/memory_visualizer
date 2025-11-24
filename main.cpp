@@ -1,103 +1,989 @@
-#include "MemoryManager.h"
-#include "Visualizer.h"
-#include "ScriptParser.h"
+// C++ Memory Visualizer - User Final Edition
+
 #include <iostream>
+#include <vector>
 #include <string>
+#include <sstream>
+#include <algorithm>
+#include <unordered_map>
+#include <functional>
 #include <limits>
+#include <cstdlib>
 
-void displayMenu() {
-    std::cout << "\n+-- ¸Ş´º ---------------------------+" << std::endl;
-    std::cout << "| 1. ¿¹Á¦ ½ºÅ©¸³Æ® ½ÇÇà             |" << std::endl;
-    std::cout << "| 2. Á÷Á¢ ÄÚµå ÀÔ·Â                 |" << std::endl;
-    std::cout << "| 3. ¸Ş¸ğ¸® ´©¼ö °Ë»ç               |" << std::endl;
-    std::cout << "| 4. ÃÊ±âÈ­                         |" << std::endl;
-    std::cout << "| 9. °£´Ü Å×½ºÆ® (µğ¹ö±ë¿ë)         |" << std::endl;
-    std::cout << "| 0. Á¾·á                           |" << std::endl;
-    std::cout << "+-----------------------------------+" << std::endl;
-    std::cout << "¼±ÅÃ: ";
-}
+using namespace std;
 
-void displayExamples() {
-    std::cout << "\n¿¹Á¦ ½ºÅ©¸³Æ®:" << std::endl;
-    for (int i = 0; i < ScriptParser::getExampleCount(); i++) {
-        std::cout << "  " << (i + 1) << ". ";
+// ==================== ë©”ëª¨ë¦¬ ë¸”ë¡ ì •ì˜ ====================
 
-        // ¿¹Á¦ Á¦¸ñ¸¸ ÃßÃâ
-        std::string script = ScriptParser::getExampleScript(i);
-        size_t newline = script.find('\n');
-        if (newline != std::string::npos) {
-            std::cout << script.substr(3, newline - 3);  // "// " Á¦°Å
-        }
-        std::cout << std::endl;
+enum class MemoryType {
+    STACK,
+    HEAP
+};
+
+enum class PointerType {
+    RAW
+};
+
+class MemoryBlock {
+public:
+    int id;
+    string name;
+    size_t size;
+    MemoryType type;
+    void* address;
+    bool isAllocated;
+    int lifetime;
+
+    bool isPointer;
+    PointerType pointerType;
+    int pointsTo;
+
+    float x, y;
+    float targetX, targetY;
+    bool isHighlighted;
+
+    MemoryBlock()
+        : id(-1), name(""), size(0), type(MemoryType::STACK),
+        address(nullptr), isAllocated(false), lifetime(0),
+        isPointer(false), pointerType(PointerType::RAW),
+        pointsTo(-1),
+        x(0), y(0), targetX(0), targetY(0), isHighlighted(false) {
     }
-    std::cout << "  0. µ¹¾Æ°¡±â" << std::endl;
-    std::cout << "¼±ÅÃ: ";
+};
+
+class MemoryEvent {
+public:
+    enum class EventType {
+        ALLOCATE,
+        DEALLOCATE,
+        ASSIGN,
+        LEAK
+    };
+
+    EventType type;
+    int blockId;
+    string description;
+    float timestamp;
+
+    MemoryEvent(EventType t, int id, const string& desc, float time)
+        : type(t), blockId(id), description(desc), timestamp(time) {
+    }
+};
+
+// ==================== ë©”ëª¨ë¦¬ ê´€ë¦¬ì ====================
+
+class MemoryManager {
+private:
+    vector<MemoryBlock> blocks;
+    vector<MemoryEvent> events;
+    int nextId;
+    int stackDepth;
+    float currentTime;
+
+    void addEvent(MemoryEvent::EventType type, int blockId, const string& description) {
+        events.push_back(MemoryEvent(type, blockId, description, currentTime));
+        currentTime += 1.0f;
+    }
+
+public:
+    // ë©”ëª¨ë¦¬ ê´€ë¦¬ì ì´ˆê¸°í™”
+    MemoryManager() : nextId(1), stackDepth(0), currentTime(0.0f) {}
+
+    // ìŠ¤íƒ ë³€ìˆ˜ ìƒì„± (ì§€ì—­ ë³€ìˆ˜)
+    int createStackVariable(const string& name, size_t size) {
+        MemoryBlock block;
+        block.id = nextId++;
+        block.name = name;
+        block.size = size;
+        block.type = MemoryType::STACK;
+        block.address = (void*)(0x7fff0000 + blocks.size() * 8);
+        block.isAllocated = true;
+        block.isPointer = false;
+        blocks.push_back(block);
+        stackDepth++;
+
+        addEvent(MemoryEvent::EventType::ALLOCATE, block.id,
+            "ìŠ¤íƒ ë³€ìˆ˜ ìƒì„±: " + name);
+
+        return block.id;
+    }
+
+    // í™ ë©”ëª¨ë¦¬ í• ë‹¹ (ë™ì  ë©”ëª¨ë¦¬)
+    int allocateHeap(const string& name, size_t size, PointerType ptrType = PointerType::RAW) {
+        MemoryBlock block;
+        block.id = nextId++;
+        block.name = name;
+        block.size = size;
+        block.type = MemoryType::HEAP;
+        block.address = (void*)(0x10000000 + blocks.size() * 16);
+        block.isAllocated = true;
+        block.isPointer = false;
+        blocks.push_back(block);
+
+        addEvent(MemoryEvent::EventType::ALLOCATE, block.id,
+            "í™ ë©”ëª¨ë¦¬ í• ë‹¹: " + name);
+
+        return block.id;
+    }
+
+    // ë©”ëª¨ë¦¬ í•´ì œ (delete ìˆ˜í–‰)
+    bool deallocate(int blockId) {
+        for (auto& block : blocks) {
+            if (block.id == blockId && block.isAllocated) {
+                block.isAllocated = false;
+
+                for (auto& b : blocks) {
+                    if (b.isPointer && b.pointsTo == blockId) {
+                        b.pointsTo = -1;
+                    }
+                }
+
+                addEvent(MemoryEvent::EventType::DEALLOCATE, blockId,
+                    "ë©”ëª¨ë¦¬ í•´ì œ: " + block.name);
+
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // í¬ì¸í„° ë³€ìˆ˜ì— ì£¼ì†Œ í• ë‹¹ (ptr = &var ë˜ëŠ” ptr = ptr2)
+    bool assignPointer(int pointerBlockId, int targetBlockId) {
+        for (auto& block : blocks) {
+            if (block.id == pointerBlockId) {
+                block.pointsTo = targetBlockId;
+
+                string targetName = (targetBlockId == -1) ? "nullptr" : findBlock(targetBlockId)->name;
+
+                addEvent(MemoryEvent::EventType::ASSIGN, pointerBlockId,
+                    "í¬ì¸í„° ì—°ê²°: " + block.name + " -> " + targetName);
+
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // í”„ë¡œê·¸ë¨ ì¢…ë£Œ ì‹œ ëª¨ë“  ìŠ¤íƒ ë©”ëª¨ë¦¬ ì •ë¦¬
+    void clearAllStack() {
+        for (auto& block : blocks) {
+            if (block.type == MemoryType::STACK && block.isAllocated) {
+                block.isAllocated = false;
+                addEvent(MemoryEvent::EventType::DEALLOCATE, block.id,
+                    "í”„ë¡œê·¸ë¨ ì¢…ë£Œë¡œ ë³€ìˆ˜ í•´ì œ: " + block.name);
+            }
+        }
+        stackDepth = 0;
+    }
+
+    // ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ê°ì§€ (í•´ì œë˜ì§€ ì•Šì€ í™ ë©”ëª¨ë¦¬ ì°¾ê¸°)
+    vector<int> detectLeaks() const {
+        vector<int> leaks;
+        for (const auto& block : blocks) {
+            if (block.type == MemoryType::HEAP && block.isAllocated) {
+                bool hasPointer = false;
+                for (const auto& ptr : blocks) {
+                    if (ptr.isPointer && ptr.isAllocated && ptr.pointsTo == block.id) {
+                        hasPointer = true;
+                        break;
+                    }
+                }
+                if (!hasPointer) {
+                    leaks.push_back(block.id);
+                }
+            }
+        }
+        return leaks;
+    }
+
+    // IDë¡œ ë©”ëª¨ë¦¬ ë¸”ë¡ ì°¾ê¸°
+    MemoryBlock* findBlock(int id) {
+        for (auto& block : blocks) {
+            if (block.id == id) return &block;
+        }
+        return nullptr;
+    }
+
+    const MemoryBlock* findBlock(int id) const {
+        for (const auto& block : blocks) {
+            if (block.id == id) return &block;
+        }
+        return nullptr;
+    }
+
+    const vector<MemoryBlock>& getMemoryBlocks() const { return blocks; }
+    const vector<MemoryEvent>& getEvents() const { return events; }
+
+    // ë©”ëª¨ë¦¬ ê´€ë¦¬ì ì´ˆê¸°í™” (ëª¨ë“  ë°ì´í„° ì‚­ì œ)
+    void reset() {
+        blocks.clear();
+        events.clear();
+        nextId = 1;
+        stackDepth = 0;
+        currentTime = 0.0f;
+    }
+};
+
+// ==================== í™”ë©´ ì¶œë ¥ ====================
+
+class Visualizer {
+private:
+    string colorReset = "\033[0m";
+    string colorRed = "\033[31m";
+    string colorGreen = "\033[32m";
+    string colorYellow = "\033[33m";
+    string colorBlue = "\033[34m";
+    string colorMagenta = "\033[35m";
+    string colorCyan = "\033[36m";
+    string colorBold = "\033[1m";
+
+    void printSeparator(char ch, int width) const {
+        for (int i = 0; i < width; i++) {
+            cout << ch;
+        }
+        cout << endl;
+    }
+
+    // ìŠ¤íƒ ë©”ëª¨ë¦¬ ì˜ì—­ ì¶œë ¥
+    void printStack(const vector<MemoryBlock>& blocks) const {
+        bool hasStack = false;
+        for (const auto& block : blocks) {
+            if (block.type == MemoryType::STACK && block.isAllocated) {
+                hasStack = true;
+                cout << "â”‚ " << colorBlue;
+                cout << block.name;
+                for (size_t i = block.name.length(); i < 15; i++) cout << " ";
+
+                if (block.isPointer) {
+                    cout << " [ptr]          ";
+                }
+                else {
+                    cout << " [val]          ";
+                }
+
+                cout << block.size << "bytes";
+                cout << colorReset << endl;
+            }
+        }
+
+        if (!hasStack) {
+            cout << "â”‚ (ë¹„ì–´ìˆìŒ)" << endl;
+        }
+    }
+
+    // í™ ë©”ëª¨ë¦¬ ì˜ì—­ ì¶œë ¥
+    void printHeap(const vector<MemoryBlock>& blocks) const {
+        bool hasHeap = false;
+        for (const auto& block : blocks) {
+            if (block.type == MemoryType::HEAP && block.isAllocated) {
+                hasHeap = true;
+                cout << "â”‚ " << colorRed;
+                cout << block.name;
+                for (size_t i = block.name.length(); i < 30; i++) cout << " ";
+                cout << block.size << "bytes";
+                cout << colorReset << endl;
+            }
+        }
+
+        if (!hasHeap) {
+            cout << "â”‚ (ë¹„ì–´ìˆìŒ)" << endl;
+        }
+    }
+
+    // í¬ì¸í„° ì—°ê²° ê´€ê³„ ì¶œë ¥ (ptr -> data)
+    void printPointerConnections(const vector<MemoryBlock>& blocks) const {
+        bool hasConnections = false;
+        for (const auto& block : blocks) {
+            if (block.isPointer && block.isAllocated && block.pointsTo != -1) {
+                hasConnections = true;
+                const MemoryBlock* target = nullptr;
+                for (const auto& b : blocks) {
+                    if (b.id == block.pointsTo) {
+                        target = &b;
+                        break;
+                    }
+                }
+
+                cout << "  " << colorYellow << block.name << colorReset;
+                cout << " â”€â”€> ";
+
+                if (target && target->isAllocated) {
+                    if (target->type == MemoryType::HEAP)
+                        cout << colorRed << target->name << colorReset;
+                    else
+                        cout << colorBlue << target->name << " (Stack)" << colorReset;
+                }
+                else {
+                    cout << colorRed << "(dangling)" << colorReset;
+                }
+                cout << endl;
+            }
+        }
+
+        if (!hasConnections) {
+            cout << "  (í¬ì¸í„° ì—°ê²° ì—†ìŒ)" << endl;
+        }
+    }
+
+    // ì´ë²¤íŠ¸ ë¡œê·¸ ì¶œë ¥ (ìµœê·¼ countê°œ)
+    void printEventLog(const vector<MemoryEvent>& events, int count) const {
+        int startIdx = (int)events.size() - count;
+        if (startIdx < 0) startIdx = 0;
+
+        for (size_t i = startIdx; i < events.size(); i++) {
+            const auto& event = events[i];
+
+            switch (event.type) {
+            case MemoryEvent::EventType::ALLOCATE:
+                cout << "  " << colorGreen << "[ALLOC]  " << colorReset;
+                break;
+            case MemoryEvent::EventType::DEALLOCATE:
+                cout << "  " << colorRed << "[FREE]   " << colorReset;
+                break;
+            case MemoryEvent::EventType::ASSIGN:
+                cout << "  " << colorYellow << "[ASSIGN] " << colorReset;
+                break;
+            case MemoryEvent::EventType::LEAK:
+                cout << "  " << colorRed << "[LEAK]   " << colorReset;
+                break;
+            }
+
+            cout << event.description << endl;
+        }
+    }
+
+public:
+    // í™”ë©´ ì§€ìš°ê¸°
+    void clearScreen() const {
+#ifdef _WIN32
+        system("cls");
+#else
+        system("clear");
+#endif
+    }
+
+    // ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ê²½ê³  ì¶œë ¥
+    void printLeakWarnings(const vector<int>& leaks, const MemoryManager& memManager) const {
+        if (leaks.empty()) return;
+
+        cout << colorBold << colorRed;
+        cout << "âš  ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ê°ì§€! " << leaks.size() << "ê°œ ë¸”ë¡" << colorReset << endl;
+
+        for (int id : leaks) {
+            const MemoryBlock* block = memManager.findBlock(id);
+            if (block) {
+                cout << "  - " << colorRed << block->name << " (" << block->size << " bytes, @"
+                    << block->address << ")" << colorReset << endl;
+            }
+        }
+    }
+
+    // ì „ì²´ ë©”ëª¨ë¦¬ ìƒíƒœ ì¶œë ¥ (ìµœì¢… ê²°ê³¼ í™”ë©´)
+    void printMemoryState(const MemoryManager& memManager) const {
+        clearScreen();
+
+        cout << colorBold << colorCyan;
+        printSeparator('=', 70);
+        cout << "        C++ ë©”ëª¨ë¦¬ ê´€ë¦¬ ì‹œê°í™” ë„êµ¬ - ì½˜ì†” ë²„ì „" << endl;
+        printSeparator('=', 70);
+        cout << colorReset << endl;
+
+        const auto& blocks = memManager.getMemoryBlocks();
+
+        auto leaks = memManager.detectLeaks();
+        if (!leaks.empty()) {
+            printLeakWarnings(leaks, memManager);
+            cout << endl;
+        }
+
+        cout << colorBold << colorBlue << "â”Œâ”€ STACK ë©”ëª¨ë¦¬ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”" << colorReset << endl;
+        printStack(blocks);
+        cout << colorBlue << "â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜" << colorReset << endl;
+        cout << endl;
+
+        cout << colorBold << colorRed << "â”Œâ”€ HEAP ë©”ëª¨ë¦¬ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”" << colorReset << endl;
+        printHeap(blocks);
+        cout << colorRed << "â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜" << colorReset << endl;
+        cout << endl;
+
+        cout << colorBold << colorYellow << "í¬ì¸í„° ì—°ê²°:" << colorReset << endl;
+        printPointerConnections(blocks);
+        cout << endl;
+
+        cout << colorBold << colorGreen << "ìµœê·¼ ì´ë²¤íŠ¸:" << colorReset << endl;
+        printEventLog(memManager.getEvents(), 15);
+        cout << endl;
+
+        printSeparator('-', 70);
+    }
+
+    // ë©”ëª¨ë¦¬ ìƒíƒœ ì¶œë ¥ (ë‹¨ê³„ë³„ ì‹¤í–‰ í™”ë©´ - í˜„ì¬ ì‹¤í–‰ ë¼ì¸ í‘œì‹œ)
+    void printMemoryStateWithLine(const MemoryManager& memManager,
+        const string& currentLine,
+        int lineNumber) const {
+        clearScreen();
+
+        cout << colorBold << colorCyan;
+        printSeparator('=', 70);
+        cout << "        C++ ë©”ëª¨ë¦¬ ê´€ë¦¬ ì‹œê°í™” ë„êµ¬ - ë‹¨ê³„ë³„ ì‹¤í–‰" << endl;
+        printSeparator('=', 70);
+        cout << colorReset << endl;
+
+        cout << colorBold << colorMagenta << "â–¶ í˜„ì¬ ì‹¤í–‰ ë¼ì¸ " << lineNumber << ": " << colorReset;
+        cout << colorYellow << currentLine << colorReset << endl;
+        cout << endl;
+
+        const auto& blocks = memManager.getMemoryBlocks();
+
+        auto leaks = memManager.detectLeaks();
+        if (!leaks.empty()) {
+            printLeakWarnings(leaks, memManager);
+            cout << endl;
+        }
+
+        cout << colorBold << colorBlue << "â”Œâ”€ STACK ë©”ëª¨ë¦¬ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”" << colorReset << endl;
+        printStack(blocks);
+        cout << colorBlue << "â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜" << colorReset << endl;
+        cout << endl;
+
+        cout << colorBold << colorRed << "â”Œâ”€ HEAP ë©”ëª¨ë¦¬ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”" << colorReset << endl;
+        printHeap(blocks);
+        cout << colorRed << "â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜" << colorReset << endl;
+        cout << endl;
+
+        cout << colorBold << colorYellow << "í¬ì¸í„° ì—°ê²°:" << colorReset << endl;
+        printPointerConnections(blocks);
+        cout << endl;
+
+        cout << colorBold << colorGreen << "ìµœê·¼ ì´ë²¤íŠ¸:" << colorReset << endl;
+        printEventLog(memManager.getEvents(), 15);
+        cout << endl;
+
+        printSeparator('-', 70);
+        cout << colorGreen << "â–¶ Enterë¥¼ ëˆ„ë¥´ë©´ ë‹¤ìŒ ë‹¨ê³„ë¡œ ì§„í–‰í•©ë‹ˆë‹¤..." << colorReset << endl;
+    }
+};
+
+// ==================== ì½”ë“œ íŒŒì„œ ==================== 
+
+class ScriptParser {
+private:
+    MemoryManager& memManager;
+    unordered_map<string, int> variables;
+    int scopeLevel;
+
+    vector<string> splitIntoLines(const string& code) {
+        vector<string> lines;
+        istringstream stream(code);
+        string line;
+        while (getline(stream, line)) {
+            lines.push_back(line);
+        }
+        return lines;
+    }
+
+    string removeComments(const string& line) {
+        size_t pos = line.find("//");
+        if (pos != string::npos) {
+            return line.substr(0, pos);
+        }
+        return line;
+    }
+
+    string trim(const string& str) {
+        size_t first = str.find_first_not_of(" \t\r\n");
+        if (first == string::npos) return "";
+        size_t last = str.find_last_not_of(" \t\r\n");
+        return str.substr(first, last - first + 1);
+    }
+
+    vector<string> tokenize(const string& line) {
+        vector<string> tokens;
+        string current;
+        for (char ch : line) {
+            if (isspace(ch) || ch == ';' || ch == '(' || ch == ')' || ch == '{' || ch == '}') {
+                if (!current.empty()) {
+                    tokens.push_back(current);
+                    current.clear();
+                }
+            }
+            else {
+                current += ch;
+            }
+        }
+        if (!current.empty()) {
+            tokens.push_back(current);
+        }
+        return tokens;
+    }
+
+    bool isBasicType(const string& type) {
+        string t = type;
+        t.erase(remove(t.begin(), t.end(), '*'), t.end());
+        return t == "int" || t == "float" || t == "double" ||
+            t == "char" || t == "bool" || t == "long" || t == "short";
+    }
+
+    size_t getTypeSize(const string& type) {
+        if (type.find("int") != string::npos) return 4;
+        if (type.find("double") != string::npos) return 8;
+        if (type.find("float") != string::npos) return 4;
+        if (type.find("char") != string::npos) return 1;
+        if (type.find("long") != string::npos) return 8;
+        if (type.find("short") != string::npos) return 2;
+        if (type.find("bool") != string::npos) return 1;
+        return 4;
+    }
+
+    // ë³€ìˆ˜ ì„ ì–¸ íŒŒì‹± (int* ptr; ë“±)
+    bool parseDeclaration(const string& line) {
+        auto tokens = tokenize(line);
+        if (tokens.size() < 2) return false;
+
+        string type = tokens[0];
+        string name = tokens[1];
+
+        if (!name.empty() && name.back() == ';') {
+            name.pop_back();
+        }
+
+        while (!name.empty() && name[0] == '*') {
+            type += "*";
+            name = name.substr(1);
+        }
+
+        bool isPtr = (type.find('*') != string::npos);
+
+        size_t size = isPtr ? sizeof(void*) : getTypeSize(type);
+
+        if (isPtr) {
+            int id = memManager.createStackVariable(name, size);
+            MemoryBlock* block = memManager.findBlock(id);
+            if (block) {
+                block->isPointer = true;
+                block->pointerType = PointerType::RAW;
+                block->pointsTo = -1;
+            }
+            variables[name] = id;
+        }
+        else {
+            int id = memManager.createStackVariable(name, size);
+            variables[name] = id;
+        }
+
+        return true;
+    }
+
+    // new ì—°ì‚°ì íŒŒì‹± (ptr = new int;)
+    bool parseNew(const string& line) {
+        size_t equalPos = line.find('=');
+        if (equalPos == string::npos) return false;
+
+        string varPart = trim(line.substr(0, equalPos));
+        string valuePart = trim(line.substr(equalPos + 1));
+
+        auto tokens = tokenize(varPart);
+        string varName;
+
+        for (auto it = tokens.rbegin(); it != tokens.rend(); ++it) {
+            string token = *it;
+            token.erase(remove(token.begin(), token.end(), '*'), token.end());
+            if (!token.empty() && !isBasicType(token)) {
+                varName = *it;
+                varName.erase(remove(varName.begin(), varName.end(), '*'), varName.end());
+                break;
+            }
+        }
+
+        if (varName.empty() && !tokens.empty()) {
+            varName = tokens.back();
+            varName.erase(remove(varName.begin(), varName.end(), '*'), varName.end());
+        }
+
+        size_t newPos = valuePart.find("new ");
+        if (newPos == string::npos) return false;
+
+        string typeStr = trim(valuePart.substr(newPos + 4));
+        if (typeStr.find('(') != string::npos) typeStr = typeStr.substr(0, typeStr.find('('));
+        if (typeStr.find(';') != string::npos) typeStr = typeStr.substr(0, typeStr.find(';'));
+        typeStr = trim(typeStr);
+
+        string heapName = varName + "_data";
+        size_t size = getTypeSize(typeStr);
+        int heapId = memManager.allocateHeap(heapName, size, PointerType::RAW);
+
+        auto it = variables.find(varName);
+        if (it == variables.end()) return false;
+
+        memManager.assignPointer(it->second, heapId);
+        return true;
+    }
+
+    // delete ì—°ì‚°ì íŒŒì‹± (delete ptr;)
+    bool parseDelete(const string& line) {
+        string varName = trim(line.substr(7));
+        if (!varName.empty() && varName.back() == ';') varName.pop_back();
+
+        auto it = variables.find(varName);
+        if (it == variables.end()) return false;
+
+        MemoryBlock* ptrBlock = memManager.findBlock(it->second);
+        if (!ptrBlock || !ptrBlock->isPointer) return false;
+
+        if (ptrBlock->pointsTo != -1) {
+            memManager.deallocate(ptrBlock->pointsTo);
+            ptrBlock->pointsTo = -1;
+        }
+        return true;
+    }
+
+    // í• ë‹¹ ì—°ì‚° íŒŒì‹± (ptr = &var; ë˜ëŠ” ptr = nullptr;)
+    bool parseAssignment(const string& line) {
+        size_t equalPos = line.find('=');
+        if (equalPos == string::npos) return true;
+
+        string leftSide = trim(line.substr(0, equalPos));
+        string rightSide = trim(line.substr(equalPos + 1));
+
+        if (!rightSide.empty() && rightSide.back() == ';') rightSide.pop_back();
+
+        auto leftTokens = tokenize(leftSide);
+        string leftVarName = leftTokens.back();
+        leftVarName.erase(remove(leftVarName.begin(), leftVarName.end(), '*'), leftVarName.end());
+
+        auto leftIt = variables.find(leftVarName);
+        if (leftIt == variables.end()) return true;
+
+        if (rightSide == "nullptr" || rightSide == "NULL") {
+            memManager.assignPointer(leftIt->second, -1);
+            return true;
+        }
+
+        if (rightSide.size() > 1 && rightSide[0] == '&') {
+            string targetName = trim(rightSide.substr(1));
+            targetName.erase(remove(targetName.begin(), targetName.end(), ';'), targetName.end());
+
+            auto targetIt = variables.find(targetName);
+            if (targetIt != variables.end()) {
+                memManager.assignPointer(leftIt->second, targetIt->second);
+                return true;
+            }
+        }
+
+        string rightVarName = rightSide;
+        rightVarName.erase(remove(rightVarName.begin(), rightVarName.end(), ';'), rightVarName.end());
+
+        auto rightIt = variables.find(rightVarName);
+        if (rightIt != variables.end()) {
+            MemoryBlock* rightBlock = memManager.findBlock(rightIt->second);
+            if (rightBlock && rightBlock->isPointer) {
+                memManager.assignPointer(leftIt->second, rightBlock->pointsTo);
+            }
+            return true;
+        }
+
+        return true;
+    }
+
+    // í•œ ì¤„ì˜ ì½”ë“œ ì‹¤í–‰
+    bool executeLine(const string& line) {
+        string trimmedLine = trim(line);
+
+        if (trimmedLine.find("int main(") != string::npos) {
+            scopeLevel = 0;
+            return true;
+        }
+
+        if (trimmedLine == "{") {
+            scopeLevel++;
+            return true;
+        }
+
+        if (trimmedLine == "}") {
+            if (scopeLevel > 0) {
+                scopeLevel--;
+            }
+            return true;
+        }
+
+        if (trimmedLine.find("delete ") == 0) return parseDelete(trimmedLine);
+
+        if (trimmedLine.find(" = new ") != string::npos) {
+            auto tokens = tokenize(trimmedLine);
+            if (tokens.size() >= 2 && (isBasicType(tokens[0]) || tokens[0].find('*') != string::npos)) {
+                size_t equalPos = trimmedLine.find('=');
+                string declPart = trim(trimmedLine.substr(0, equalPos));
+                if (!parseDeclaration(declPart + ";")) return false;
+                return parseNew(trimmedLine);
+            }
+            else {
+                return parseNew(trimmedLine);
+            }
+        }
+
+        if (trimmedLine.find(" = ") != string::npos && trimmedLine.find(';') != string::npos) {
+            auto tokens = tokenize(trimmedLine);
+            if (tokens.size() >= 2 && (isBasicType(tokens[0]) || tokens[0].find('*') != string::npos)) {
+                size_t equalPos = trimmedLine.find('=');
+                string declPart = trim(trimmedLine.substr(0, equalPos));
+
+                if (!parseDeclaration(declPart + ";")) return false;
+
+                string varName = tokens[1];
+                if (tokens[0].find('*') != string::npos && tokens.size() == 2) {
+                }
+                else if (tokens.size() > 2) {
+                    auto declTokens = tokenize(declPart);
+                    varName = declTokens.back();
+                }
+                varName.erase(remove(varName.begin(), varName.end(), '*'), varName.end());
+
+                string assignCmd = varName + " = " + trim(trimmedLine.substr(equalPos + 1));
+                return parseAssignment(assignCmd);
+            }
+            return parseAssignment(trimmedLine);
+        }
+
+        if (trimmedLine.find("return ") == 0) return true;
+
+        auto tokens = tokenize(trimmedLine);
+        if (tokens.size() >= 2) {
+            if (isBasicType(tokens[0]) || tokens[0].find('*') != string::npos) {
+                return parseDeclaration(trimmedLine);
+            }
+        }
+
+        return true;
+    }
+
+public:
+    ScriptParser(MemoryManager& manager)
+        : memManager(manager), scopeLevel(0) {
+    }
+
+    // ìŠ¤í¬ë¦½íŠ¸ë¥¼ í•œ ì¤„ì”© ë‹¨ê³„ë³„ë¡œ ì‹¤í–‰
+    bool executeScriptStepByStep(const string& script,
+        function<void(const string&, int)> stepCallback) {
+        auto lines = splitIntoLines(script);
+        int lineNumber = 0;
+
+        for (const auto& line : lines) {
+            lineNumber++;
+            string cleaned = removeComments(line);
+            string trimmedLine = trim(cleaned);
+
+            if (trimmedLine.empty()) continue;
+
+            if (stepCallback) {
+                stepCallback(line, lineNumber);
+            }
+
+            if (!executeLine(trimmedLine)) {
+                return false;
+            }
+        }
+
+        if (stepCallback) {
+            stepCallback("// í”„ë¡œê·¸ë¨ ì¢…ë£Œ - ìŠ¤íƒ ë©”ëª¨ë¦¬ ì •ë¦¬ ì¤‘...", lineNumber + 1);
+        }
+
+        memManager.clearAllStack();
+
+        return true;
+    }
+
+    // íŒŒì„œ ì´ˆê¸°í™”
+    void reset() {
+        variables.clear();
+        scopeLevel = 0;
+    }
+
+    // ì˜ˆì œ ìŠ¤í¬ë¦½íŠ¸ ê°€ì ¸ì˜¤ê¸°
+    static string getExampleScript(int index) {
+        switch (index) {
+        case 0:
+            return
+                "// ì˜ˆì œ 1: Raw Pointer - Memory Leak\n"
+                "int main() {\n"
+                "    int* ptr = new int;\n"
+                "    return 0;\n"
+                "}";
+
+        case 1:
+            return
+                "// ì˜ˆì œ 2: Raw Pointer - Proper Usage\n"
+                "int main() {\n"
+                "    int* ptr = new int;\n"
+                "    delete ptr;\n"
+                "    return 0;\n"
+                "}";
+
+        case 2:
+            return
+                "// ì˜ˆì œ 3: Dangling Pointer\n"
+                "int main() {\n"
+                "    int* ptr1 = new int;\n"
+                "    int* ptr2 = ptr1;\n"
+                "    delete ptr1;\n"
+                "    return 0;\n"
+                "}";
+
+        case 3:
+            return
+                "// ì˜ˆì œ 4: Stack vs Heap\n"
+                "int main() {\n"
+                "    int stackVar = 5;\n"
+                "    int* heapPtr = new int;\n"
+                "    delete heapPtr;\n"
+                "    return 0;\n"
+                "}";
+
+        case 4:
+            return
+                "// ì˜ˆì œ 5: ë‹¤ì¤‘ í¬ì¸í„° (Double Pointer)\n"
+                "int main() {\n"
+                "    int* ptr = new int;\n"
+                "    int** dptr = &ptr;\n"
+                "    delete ptr;\n"
+                "    return 0;\n"
+                "}";
+
+        case 5:
+            return
+                "// ì˜ˆì œ 6: í¬ì¸í„° ë°°ì—´\n"
+                "int main() {\n"
+                "    int* arr1 = new int;\n"
+                "    int* arr2 = new int;\n"
+                "    int* arr3 = new int;\n"
+                "    delete arr3;\n"
+                "    delete arr2;\n"
+                "    delete arr1;\n"
+                "    return 0;\n"
+                "}";
+
+        default:
+            return "";
+        }
+    }
+
+    static int getExampleCount() {
+        return 6;
+    }
+};
+
+// ==================== ë©”ì¸ í•¨ìˆ˜ ====================
+
+// ë©”ì¸ ë©”ë‰´ ì¶œë ¥
+void displayMenu() {
+    cout << "\n+-- ë©”ë‰´ ---------------------------+" << endl;
+    cout << "| 1. ì˜ˆì œ ìŠ¤í¬ë¦½íŠ¸ ë‹¨ê³„ë³„ ì‹¤í–‰      |" << endl;
+    cout << "| 2. ì§ì ‘ ì½”ë“œ ë‹¨ê³„ë³„ ì‹¤í–‰          |" << endl;
+    cout << "| 0. ì¢…ë£Œ                           |" << endl;
+    cout << "+-----------------------------------+" << endl;
+    cout << "ì„ íƒ: ";
 }
 
-void runExample(int index, MemoryManager& memManager, ScriptParser& parser, Visualizer& visualizer) {
+// ì˜ˆì œ ëª©ë¡ ì¶œë ¥
+void displayExamples() {
+    cout << "\nì˜ˆì œ ìŠ¤í¬ë¦½íŠ¸:" << endl;
+    for (int i = 0; i < ScriptParser::getExampleCount(); i++) {
+        cout << "  " << (i + 1) << ". ";
+        string script = ScriptParser::getExampleScript(i);
+        size_t newline = script.find('\n');
+        if (newline != string::npos) {
+            cout << script.substr(3, newline - 3);
+        }
+        cout << endl;
+    }
+    cout << "  0. ëŒì•„ê°€ê¸°" << endl;
+    cout << "ì„ íƒ: ";
+}
+
+
+// ì˜ˆì œ ìŠ¤í¬ë¦½íŠ¸ë¥¼ ë‹¨ê³„ë³„ë¡œ ì‹¤í–‰
+void runExampleStepByStep(int index, MemoryManager& memManager, ScriptParser& parser, Visualizer& visualizer) {
     parser.reset();
     memManager.reset();
 
-    std::string script = ScriptParser::getExampleScript(index);
+    string script = ScriptParser::getExampleScript(index);
 
-    std::cout << "\n" << "=== ½ºÅ©¸³Æ® ===" << std::endl;
-    std::cout << script << std::endl;
-    std::cout << "=================" << std::endl;
+    cout << "\n" << "=== ìŠ¤í¬ë¦½íŠ¸ (ë‹¨ê³„ë³„ ì‹¤í–‰) ===" << endl;
+    cout << script << endl;
+    cout << "===============================" << endl;
 
-    std::cout << "\n[DEBUG] ½ºÅ©¸³Æ® ½ÇÇà ½ÃÀÛ..." << std::endl;
+    cout << "\nâ­ ë‹¨ê³„ë³„ ì‹¤í–‰ ëª¨ë“œ" << endl;
+    cout << "ê° ì¤„ì´ ì‹¤í–‰ë  ë•Œë§ˆë‹¤ ë©”ëª¨ë¦¬ ë³€í™”ë¥¼ í™•ì¸í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤." << endl;
+    cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ì‹œì‘í•©ë‹ˆë‹¤...";
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    cin.get();
 
-    bool result = parser.executeScript(script);
+    bool result = parser.executeScriptStepByStep(script,
+        [&memManager, &visualizer](const string& line, int lineNum) {
+            visualizer.printMemoryStateWithLine(memManager, line, lineNum);
+            cin.get();
+        });
 
     if (!result) {
-        std::cout << "\n[ERROR] ½ºÅ©¸³Æ® ½ÇÇà ½ÇÆĞ!" << std::endl;
-        std::cout << "¿À·ù: " << parser.getLastError() << std::endl;
+        cout << "\n[ERROR] ìŠ¤í¬ë¦½íŠ¸ ì‹¤í–‰ ì‹¤íŒ¨!" << endl;
+        cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ê³„ì†...";
+        cin.get();
     }
     else {
-        std::cout << "[DEBUG] ½ºÅ©¸³Æ® ½ÇÇà ¼º°ø!" << std::endl;
+        visualizer.clearScreen();
+        cout << "\n" << "âœ… í”„ë¡œê·¸ë¨ ì‹¤í–‰ ì™„ë£Œ!" << endl;
+        cout << "\nìµœì¢… ë©”ëª¨ë¦¬ ìƒíƒœ:" << endl << endl;
+
+        auto leaks = memManager.detectLeaks();
+        if (!leaks.empty()) {
+            cout << "\033[1;31m";
+            cout << "âš  ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ê°ì§€! " << leaks.size() << "ê°œ ë¸”ë¡" << "\033[0m" << endl;
+            for (int id : leaks) {
+                const MemoryBlock* block = memManager.findBlock(id);
+                if (block) {
+                    cout << "  - \033[31m" << block->name << " (" << block->size << " bytes)\033[0m" << endl;
+                }
+            }
+            cout << endl;
+        }
+        else {
+            cout << "\033[32m[OK] ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ê°€ ì—†ìŠµë‹ˆë‹¤!\033[0m" << endl << endl;
+        }
+
+        visualizer.printMemoryState(memManager);
+
+        cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ê³„ì†...";
+        cin.get();
     }
-
-    std::cout << "[DEBUG] ¸Ş¸ğ¸® ºí·Ï ¼ö: " << memManager.getMemoryBlocks().size() << std::endl;
-    std::cout << "[DEBUG] ÀÌº¥Æ® ¼ö: " << memManager.getEvents().size() << std::endl;
-
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é ¸Ş¸ğ¸® »óÅÂ¸¦ È®ÀÎÇÕ´Ï´Ù...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
-
-    visualizer.printMemoryState(memManager);
-
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-    std::cin.get();
 }
 
+// ì‚¬ìš©ìê°€ ì§ì ‘ ì…ë ¥í•œ ì½”ë“œë¥¼ ë‹¨ê³„ë³„ë¡œ ì‹¤í–‰
 void runCustomCode(MemoryManager& memManager, ScriptParser& parser, Visualizer& visualizer) {
     parser.reset();
     memManager.reset();
 
-    std::cout << "\n¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬" << std::endl;
-    std::cout << "ÄÚµå¸¦ ÀÔ·ÂÇÏ¼¼¿ä (ÀÔ·Â ¿Ï·á ÈÄ ºó ÁÙ¿¡¼­ Enter):" << std::endl;
-    std::cout << "¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬¦¬" << std::endl;
-    std::cout << "\n¿¹½Ã:\n";
-    std::cout << "int main() {\n";
-    std::cout << "    int x = 5;\n";
-    std::cout << "    int* ptr = new int;\n";
-    std::cout << "    delete ptr;\n";
-    std::cout << "    return 0;\n";
-    std::cout << "}\n" << std::endl;
-    std::cout << "ÀÔ·Â ½ÃÀÛ (ºó ÁÙ¿¡¼­ Enter·Î Á¾·á):\n" << std::endl;
+    cout << "\nâ”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”" << endl;
+    cout << "ì½”ë“œë¥¼ ì…ë ¥í•˜ì„¸ìš” (ì…ë ¥ ì™„ë£Œ í›„ ë¹ˆ ì¤„ì—ì„œ Enter):" << endl;
+    cout << "â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜" << endl;
+    cout << "\nì˜ˆì‹œ:\n";
+    cout << "int main() {\n";
+    cout << "    int x = 5;\n";
+    cout << "    int* ptr = new int;\n";
+    cout << "    delete ptr;\n";
+    cout << "    return 0;\n";
+    cout << "}\n" << endl;
+    cout << "ì…ë ¥ ì‹œì‘ (ë¹ˆ ì¤„ì—ì„œ Enterë¡œ ì¢…ë£Œ):\n" << endl;
 
-    std::string code;
-    std::string line;
+    string code;
+    string line;
 
-    // ÀÔ·Â ¹öÆÛ ºñ¿ì±â
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
 
     int lineCount = 0;
     while (true) {
-        std::cout << (lineCount + 1) << ": ";
-        std::getline(std::cin, line);
+        cout << (lineCount + 1) << ": ";
+        getline(cin, line);
 
         if (line.empty()) {
-            std::cout << "[DEBUG] ÀÔ·Â Á¾·á (ÃÑ " << lineCount << "ÁÙ)" << std::endl;
+            cout << "[DEBUG] ì…ë ¥ ì¢…ë£Œ (ì´ " << lineCount << "ì¤„)" << endl;
             break;
         }
 
@@ -106,184 +992,120 @@ void runCustomCode(MemoryManager& memManager, ScriptParser& parser, Visualizer& 
     }
 
     if (code.empty()) {
-        std::cout << "\n[ERROR] ÄÚµå°¡ ÀÔ·ÂµÇÁö ¾Ê¾Ò½À´Ï´Ù." << std::endl;
-        std::cout << "¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-        std::cin.get();
+        cout << "\n[ERROR] ì½”ë“œê°€ ì…ë ¥ë˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤." << endl;
+        cout << "ì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ê³„ì†...";
+        cin.get();
         return;
     }
 
-    std::cout << "\n[DEBUG] ÀÔ·ÂµÈ ÄÚµå:\n" << code << std::endl;
-    std::cout << "\n[DEBUG] ½ÇÇà Áß..." << std::endl;
+    cout << "\n[DEBUG] ì…ë ¥ëœ ì½”ë“œ:\n" << code << endl;
 
-    bool result = parser.executeScript(code);
+    cout << "\nâ­ ë‹¨ê³„ë³„ ì‹¤í–‰ ì‹œì‘" << endl;
+    cout << "ê° ì¤„ì´ ì‹¤í–‰ë  ë•Œë§ˆë‹¤ ë©”ëª¨ë¦¬ ë³€í™”ë¥¼ í™•ì¸í•  ìˆ˜ ìˆìŠµë‹ˆë‹¤." << endl;
+    cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ì‹œì‘í•©ë‹ˆë‹¤...";
+    cin.get();
+
+    bool result = parser.executeScriptStepByStep(code,
+        [&memManager, &visualizer](const string& line, int lineNum) {
+            visualizer.printMemoryStateWithLine(memManager, line, lineNum);
+            cin.get();
+        });
 
     if (!result) {
-        std::cout << "\n[ERROR] ¿À·ù ¹ß»ı: " << parser.getLastError() << std::endl;
+        cout << "\n[ERROR] ìŠ¤í¬ë¦½íŠ¸ ì‹¤í–‰ ì‹¤íŒ¨!" << endl;
+        cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ê³„ì†...";
+        cin.get();
     }
     else {
-        std::cout << "[DEBUG] ½ÇÇà ¼º°ø!" << std::endl;
+        visualizer.clearScreen();
+        cout << "\n" << "âœ… í”„ë¡œê·¸ë¨ ì‹¤í–‰ ì™„ë£Œ!" << endl;
+        cout << "\nìµœì¢… ë©”ëª¨ë¦¬ ìƒíƒœ:" << endl << endl;
+
+        auto leaks = memManager.detectLeaks();
+        if (!leaks.empty()) {
+            cout << "\033[1;31m";
+            cout << "âš  ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ê°ì§€! " << leaks.size() << "ê°œ ë¸”ë¡" << "\033[0m" << endl;
+            for (int id : leaks) {
+                const MemoryBlock* block = memManager.findBlock(id);
+                if (block) {
+                    cout << "  - \033[31m" << block->name << " (" << block->size << " bytes)\033[0m" << endl;
+                }
+            }
+            cout << endl;
+        }
+        else {
+            cout << "\033[32m[OK] ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ê°€ ì—†ìŠµë‹ˆë‹¤!\033[0m" << endl << endl;
+        }
+
+        visualizer.printMemoryState(memManager);
+
+        cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ê³„ì†...";
+        cin.get();
     }
-
-    std::cout << "[DEBUG] ¸Ş¸ğ¸® ºí·Ï ¼ö: " << memManager.getMemoryBlocks().size() << std::endl;
-
-    visualizer.printMemoryState(memManager);
-
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-    std::cin.get();
 }
 
-void checkMemoryLeaks(const MemoryManager& memManager, const Visualizer& visualizer) {
-    auto leaks = memManager.detectLeaks();
-
-    std::cout << "\n¸Ş¸ğ¸® ´©¼ö °Ë»ç °á°ú:" << std::endl;
-    visualizer.printSeparator('-', 70);
-
-    if (leaks.empty()) {
-        std::cout << "[OK] ¸Ş¸ğ¸® ´©¼ö°¡ ¾ø½À´Ï´Ù!" << std::endl;
-    }
-    else {
-        const_cast<Visualizer&>(visualizer).printLeakWarnings(leaks, memManager);
-    }
-
-    visualizer.printSeparator('-', 70);
-
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
-}
-
-void runSimpleTest(MemoryManager& memManager, Visualizer& visualizer) {
-    std::cout << "\n=== °£´Ü Å×½ºÆ® ¸ğµå ===" << std::endl;
-    std::cout << "ÆÄ¼­ ¾øÀÌ Á÷Á¢ ¸Ş¸ğ¸®¸¦ »ı¼ºÇÏ¿© ±âº» ±â´ÉÀ» Å×½ºÆ®ÇÕ´Ï´Ù.\n" << std::endl;
-
-    memManager.reset();
-
-    std::cout << "[TEST 1] ½ºÅÃ º¯¼ö »ı¼º..." << std::endl;
-    int id1 = memManager.createStackVariable("test_int", sizeof(int));
-    std::cout << "  »ı¼ºµÊ: ID=" << id1 << std::endl;
-
-    std::cout << "[TEST 2] ½ºÅÃ Æ÷ÀÎÅÍ º¯¼ö »ı¼º..." << std::endl;
-    int id2 = memManager.createStackVariable("test_ptr", sizeof(void*));
-    MemoryBlock* ptrBlock = memManager.findBlock(id2);
-    if (ptrBlock) {
-        ptrBlock->isPointer = true;
-        ptrBlock->pointerType = PointerType::RAW;
-        ptrBlock->pointsTo = -1;
-        std::cout << "  »ı¼ºµÊ: ID=" << id2 << std::endl;
-    }
-
-    std::cout << "[TEST 3] Èü ¸Ş¸ğ¸® ÇÒ´ç..." << std::endl;
-    int id3 = memManager.allocateHeap("heap_data", sizeof(int), PointerType::RAW);
-    std::cout << "  ÇÒ´çµÊ: ID=" << id3 << std::endl;
-
-    std::cout << "[TEST 4] Æ÷ÀÎÅÍ ¿¬°á..." << std::endl;
-    memManager.assignPointer(id2, id3);
-    std::cout << "  ¿¬°áµÊ: ptr -> heap_data" << std::endl;
-
-    std::cout << "\nÇöÀç ¸Ş¸ğ¸® ºí·Ï ¼ö: " << memManager.getMemoryBlocks().size() << std::endl;
-    std::cout << "ÇöÀç ÀÌº¥Æ® ¼ö: " << memManager.getEvents().size() << std::endl;
-
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é ¸Ş¸ğ¸® »óÅÂ¸¦ È®ÀÎÇÕ´Ï´Ù...";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
-
-    visualizer.printMemoryState(memManager);
-
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-    std::cin.get();
-}
-
+// í”„ë¡œê·¸ë¨ ì‹œì‘ì 
 int main() {
     MemoryManager memManager;
     Visualizer visualizer;
     ScriptParser parser(memManager);
 
-    std::cout << "\033[1;36m";  // Ã»·Ï»ö º¼µå
-    std::cout << R"(
-===============================================================
-                                                               
-   C++ Memory Visualizer - Console Edition                    
-   ¸Ş¸ğ¸® °ü¸® ½Ã°¢È­ µµ±¸ - ÄÜ¼Ö ¹öÀü                        
-                                                               
-   ¼ø¼ö C++¸¸À¸·Î Á¦ÀÛ (¿ÜºÎ ¶óÀÌºê·¯¸® ¾øÀ½)                 
-                                                               
-===============================================================
-)" << std::endl;
-    std::cout << "\033[0m";  // »ö»ó ¸®¼Â
+    cout << "\033[1;36m";
+    cout << R"(
+====================================
+                                                                
+   C++ Memory Visualizer Tool
+   ë©”ëª¨ë¦¬ ê´€ë¦¬ ì‹œê°í™” ë„êµ¬
+                                                                                                                    
+====================================
+)" << endl;
+    cout << "\033[0m";
 
-    std::cout << "\n¾Æ¹« Å°³ª ´©¸£¸é ½ÃÀÛÇÕ´Ï´Ù...";
-    std::cin.get();
+    cout << "\nì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ì‹œì‘í•©ë‹ˆë‹¤...";
+    cin.get();
 
     bool running = true;
 
     while (running) {
-        visualizer.printMemoryState(memManager);
         displayMenu();
 
         int choice;
-        std::cin >> choice;
+        cin >> choice;
 
-        if (std::cin.fail()) {
-            std::cin.clear();
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::cout << "Àß¸øµÈ ÀÔ·ÂÀÔ´Ï´Ù." << std::endl;
+        if (cin.fail()) {
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
             continue;
         }
 
         switch (choice) {
         case 1: {
-            // ¿¹Á¦ ½ÇÇà
             displayExamples();
             int exampleChoice;
-            std::cin >> exampleChoice;
+            cin >> exampleChoice;
 
             if (exampleChoice > 0 && exampleChoice <= ScriptParser::getExampleCount()) {
-                runExample(exampleChoice - 1, memManager, parser, visualizer);
+                runExampleStepByStep(exampleChoice - 1, memManager, parser, visualizer);
             }
             break;
         }
 
         case 2: {
-            // Á÷Á¢ ÄÚµå ÀÔ·Â
             runCustomCode(memManager, parser, visualizer);
             break;
         }
 
-        case 3: {
-            // ¸Ş¸ğ¸® ´©¼ö °Ë»ç
-            checkMemoryLeaks(memManager, visualizer);
-            break;
-        }
-
-        case 4: {
-            // ÃÊ±âÈ­
-            memManager.reset();
-            parser.reset();
-            std::cout << "\nÃÊ±âÈ­µÇ¾ú½À´Ï´Ù." << std::endl;
-            std::cout << "¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::cin.get();
-            break;
-        }
-
-        case 9: {
-            // °£´Ü Å×½ºÆ®
-            runSimpleTest(memManager, visualizer);
-            break;
-        }
-
         case 0: {
-            // Á¾·á
             running = false;
-            std::cout << "\nÇÁ·Î±×·¥À» Á¾·áÇÕ´Ï´Ù." << std::endl;
+            cout << "\ní”„ë¡œê·¸ë¨ì„ ì¢…ë£Œí•©ë‹ˆë‹¤." << endl;
             break;
         }
 
         default:
-            std::cout << "Àß¸øµÈ ¼±ÅÃÀÔ´Ï´Ù." << std::endl;
-            std::cout << "¾Æ¹« Å°³ª ´©¸£¸é °è¼Ó...";
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::cin.get();
+            cout << "ì˜ëª»ëœ ì„ íƒì…ë‹ˆë‹¤." << endl;
+            cout << "ì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ë©´ ê³„ì†...";
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            cin.get();
             break;
         }
     }
