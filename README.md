@@ -1,7 +1,6 @@
 # C++ Memory Visualizer 🔍
 
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/yourusername/cpp-memory-visualizer)
 
 > **실시간으로 C++ 메모리 상태를 시각화하는 교육용 도구**  
