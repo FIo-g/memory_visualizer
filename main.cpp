@@ -366,7 +366,7 @@ public:
         if (leaks.empty()) return;
 
         cout << colorBold << colorRed;
-        cout << "⚠ 메모리 누수 감지! " << leaks.size() << "개 블록" << colorReset << endl;
+        cout << "!! 메모리 누수 감지 !! " << leaks.size() << "개 블록" << colorReset << endl;
 
         for (int id : leaks) {
             const MemoryBlock* block = memManager.findBlock(id);
@@ -802,7 +802,7 @@ public:
         switch (index) {
         case 0:
             return
-                "// 예제 1: Raw Pointer - Memory Leak\n"
+                "// 예제 1: 동적할당 - 메모리 누수\n"
                 "int main() {\n"
                 "    int* ptr = new int;\n"
                 "    return 0;\n"
@@ -810,7 +810,7 @@ public:
 
         case 1:
             return
-                "// 예제 2: Raw Pointer - Proper Usage\n"
+                "// 예제 2: 동적할당 - delete 사용\n"
                 "int main() {\n"
                 "    int* ptr = new int;\n"
                 "    delete ptr;\n"
@@ -819,17 +819,7 @@ public:
 
         case 2:
             return
-                "// 예제 3: Dangling Pointer\n"
-                "int main() {\n"
-                "    int* ptr1 = new int;\n"
-                "    int* ptr2 = ptr1;\n"
-                "    delete ptr1;\n"
-                "    return 0;\n"
-                "}";
-
-        case 3:
-            return
-                "// 예제 4: Stack vs Heap\n"
+                "// 예제 3: Stack vs Heap\n"
                 "int main() {\n"
                 "    int stackVar = 5;\n"
                 "    int* heapPtr = new int;\n"
@@ -837,9 +827,9 @@ public:
                 "    return 0;\n"
                 "}";
 
-        case 4:
+        case 3:
             return
-                "// 예제 5: 다중 포인터 (Double Pointer)\n"
+                "// 예제 4: 다중 포인터 (Double Pointer)\n"
                 "int main() {\n"
                 "    int* ptr = new int;\n"
                 "    int** dptr = &ptr;\n"
@@ -847,9 +837,9 @@ public:
                 "    return 0;\n"
                 "}";
 
-        case 5:
+        case 4:
             return
-                "// 예제 6: 포인터 배열\n"
+                "// 예제 5: 포인터 배열\n"
                 "int main() {\n"
                 "    int* arr1 = new int;\n"
                 "    int* arr2 = new int;\n"
@@ -866,7 +856,7 @@ public:
     }
 
     static int getExampleCount() {
-        return 6;
+        return 5;
     }
 };
 
@@ -910,7 +900,7 @@ void runExampleStepByStep(int index, MemoryManager& memManager, ScriptParser& pa
     cout << script << endl;
     cout << "===============================" << endl;
 
-    cout << "\n⭐ 단계별 실행 모드" << endl;
+    cout << "\n 단계별 실행 모드" << endl;
     cout << "각 줄이 실행될 때마다 메모리 변화를 확인할 수 있습니다." << endl;
     cout << "\n아무 키나 누르면 시작합니다...";
     cin.ignore(numeric_limits<streamsize>::max(), '\n');
@@ -929,13 +919,13 @@ void runExampleStepByStep(int index, MemoryManager& memManager, ScriptParser& pa
     }
     else {
         visualizer.clearScreen();
-        cout << "\n" << "✅ 프로그램 실행 완료!" << endl;
+        cout << "\n" << "프로그램 실행 완료!" << endl;
         cout << "\n최종 메모리 상태:" << endl << endl;
 
         auto leaks = memManager.detectLeaks();
         if (!leaks.empty()) {
             cout << "\033[1;31m";
-            cout << "⚠ 메모리 누수 감지! " << leaks.size() << "개 블록" << "\033[0m" << endl;
+            cout << "!! 메모리 누수 감지 !! " << leaks.size() << "개 블록" << "\033[0m" << endl;
             for (int id : leaks) {
                 const MemoryBlock* block = memManager.findBlock(id);
                 if (block) {
@@ -960,9 +950,9 @@ void runCustomCode(MemoryManager& memManager, ScriptParser& parser, Visualizer& 
     parser.reset();
     memManager.reset();
 
-    cout << "\n┌──────────────────────────────────┐" << endl;
-    cout << "코드를 입력하세요 (입력 완료 후 빈 줄에서 Enter):" << endl;
-    cout << "└──────────────────────────────────┘" << endl;
+    cout << "\n┌─────────────────────────────────────────────────┐" << endl;
+    cout << "  코드를 입력하세요 (입력 완료 후 빈 줄에서 Enter)" << endl;
+    cout << "└─────────────────────────────────────────────────┘" << endl;
     cout << "\n예시:\n";
     cout << "int main() {\n";
     cout << "    int x = 5;\n";
@@ -1018,13 +1008,13 @@ void runCustomCode(MemoryManager& memManager, ScriptParser& parser, Visualizer& 
     }
     else {
         visualizer.clearScreen();
-        cout << "\n" << "✅ 프로그램 실행 완료!" << endl;
+        cout << "\n" << " 프로그램 실행 완료!" << endl;
         cout << "\n최종 메모리 상태:" << endl << endl;
 
         auto leaks = memManager.detectLeaks();
         if (!leaks.empty()) {
             cout << "\033[1;31m";
-            cout << "⚠ 메모리 누수 감지! " << leaks.size() << "개 블록" << "\033[0m" << endl;
+            cout << " 메모리 누수 감지! " << leaks.size() << "개 블록" << "\033[0m" << endl;
             for (int id : leaks) {
                 const MemoryBlock* block = memManager.findBlock(id);
                 if (block) {
