@@ -21,9 +21,6 @@
 - [기술 스택](#-기술-스택)
 - [개발 과정](#-개발-과정)
 - [향후 계획](#-향후-계획)
-- [기여하기](#-기여하기)
-- [라이센스](#-라이센스)
-- [제작자](#-제작자)
 
 ---
 
@@ -322,23 +319,5 @@ C++ 코드를 파싱하고 실행
 - C++17 표준 준수
 - 한글 주석 환영
 - 변수명은 camelCase 사용
-
----
-
-## 👥 제작자
-
-### Team 12
-
-**김태형 (Kim Taehyung)**
-- 학번: 2023270629
-- 역할: 프로젝트 기획, MemoryManager 구현
-- Email: your.email@example.com
-- GitHub: [@yourusername](https://github.com/yourusername)
-
-**정의종 (Jung Euijong)**
-- 학번: 2025270667
-- 역할: ScriptParser, Visualizer 구현
-- Email: your.email@example.com
-- GitHub: [@yourusername](https://github.com/yourusername)
 
 ---
